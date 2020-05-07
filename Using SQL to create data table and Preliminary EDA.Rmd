@@ -1,0 +1,580 @@
+---
+title: "Kickstarter project-Part 1: Using SQL to create data table and Preliminary EDA"
+author: "Minh Trung DANG"
+date: "10/04/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+getwd()
+```
+
+#Setting the working diectory and the connection to MYSQL Server
+
+```{r}
+library(RMySQL)
+```
+
+```{r}
+sqlQuery <- function (query) {
+  # creating DB connection object with RMysql package
+  DB <- dbConnect(MySQL(), user='root', password = 'Ryerson2020', dbname = 'kickstarter', host = '127.0.0.1')
+
+  # send Query to obtain result set
+  rs <- dbSendQuery(DB, query)
+
+  # get elements from result sets and convert to dataframe
+  result <- fetch(rs, -1)
+
+  # close db connection
+  dbDisconnect(DB)
+
+  # return the dataframe
+  return(result)
+}
+```
+
+```{r}
+cons <- dbListConnections(MySQL()) 
+for(con in cons) 
+  dbDisconnect(con)
+```
+
+First, we need to check how many tables in the database
+
+```{r}
+sqlQuery("
+   SHOW tables;      
+         ")
+```
+There are fives tables, namely: campain, category, country, currency, and sub_category
+Check the content of individual table
+
+```{r}
+sqlQuery("
+   SHOW COLUMNS 
+   FROM campaign
+         ")
+```
+
+The description of each column as follow
+ID: unique project ID
+name: project name
+sub_category_id: what industry/category was the project in?
+country_id: id number of country of origin
+currency_id: currency funding was given in ?
+launched: date fundraising began deadline: when target amount must be raised by
+goal: desired amount of funding
+pledged: how much was promised (whether or not the goal was reached)
+backers: how many people contributed to the campaign?
+outcome: the status of project (successful/failed/...)?
+
+```{r}
+sqlQuery("
+   SHOW COLUMNS 
+   FROM category
+         ")
+```
+There are only two columns : the id of category and the category name
+
+```{r}
+sqlQuery("
+   SHOW COLUMNS 
+   FROM country;
+         ")
+```
+There are only two columns : the id of country and the country name
+
+
+```{r}
+sqlQuery("
+   SHOW COLUMNS 
+   FROM currency;
+         ")
+```
+There are also only two columns : the id of currency and the currency name
+
+Exploring each table in data base
+
+How many records in the table campaign?
+
+```{r}
+sqlQuery("
+        SELECT COUNT(*)
+        FROM campaign;
+        ")
+```
+
+```{r}
+sqlQuery("
+        SELECT COUNT(id)
+        FROM campaign;
+        ")
+```
+
+15000 id, because id is premary key => not replicate
+The table campaign contains 15000 rows
+
+
+To display the first 15 rows
+```{r}
+sqlQuery("
+      SELECT *
+      FROM campaign
+      LIMIT 15;
+      ")
+```
+
+This table contains country_id and currency_id, the country_id can be found in table country. the id of currency appears in the table campaign and the table country.
+
+How many subcategory, country, and currency ? 
+
+```{r}
+sqlQuery("
+      SELECT 
+        COUNT(DISTINCT sub_category_id)  as subidnb, 
+        COUNT(DISTINCT country_id) as countrynb,
+        COUNT(DISTINCT currency_id) as currencynb
+      FROM campaign;
+      ")
+```
+
+***launched date and deadline date (datetime)***
+
+```{r}
+sqlQuery("
+      SELECT launched AS launched_date,
+             deadline AS deadline
+      FROM campaign
+      ORDER BY launched_date DESC
+      LIMIT 10;
+      ")
+```
+There is data for 2017 and 2018
+
+```{r}
+sqlQuery("
+      SELECT launched AS launched_date,
+             deadline AS deadline
+      FROM campaign
+      ORDER BY launched_date ASC
+      LIMIT 10;
+      ")
+```
+Data covers periods from 2009-05-06 to 2018-01-02
+The year span is between 2009 to  2018. 
+To check 
+```{r}
+sqlQuery("
+    SELECT DISTINCT(YEAR(launched)) as launchedyears
+    FROM campaign
+    ORDER BY launchedyears;
+ ")
+```
+Similarly, we can check the year span for deadline
+
+```{r}
+sqlQuery("
+    SELECT DISTINCT(YEAR(deadline)) as deadlineyears
+    FROM campaign
+    ORDER BY deadlineyears;
+ ")
+```
+
+We should extract year, month, and day of month
+
+```{r}
+sqlQuery("
+      SELECT COUNT(*)
+      FROM campaign
+      WHERE YEAR(launched) = YEAR(deadline);
+      ")
+```
+
+There are 13923 projects that the launched data and the deadline were in the same year. 
+
+```{r}
+sqlQuery("
+      SELECT COUNT(*)
+      FROM campaign
+      WHERE YEAR(launched) <> YEAR(deadline);
+      ")
+```
+
+Therefore, there are 1077 projects whom the lauched year and the dealine year were different.
+
+```{r}
+sqlQuery("
+SELECT id,  DATEDIFF(deadline, launched) as daynb, goal, pledged, backers, outcome
+FROM campaign
+ORDER BY daynb DESC
+LIMIT 10
+")
+```
+the max duration is 91-92 days
+
+```{r}
+sqlQuery("
+SELECT id,  DATEDIFF(deadline, launched) as daynb, goal, pledged, backers, outcome
+FROM campaign
+ORDER BY daynb ASC
+LIMIT 10
+")
+```
+There some projects that launched and end at the same day
+Project 3233 had a goal of 100000000 and pledged 0 ==> failed
+
+
+```{r}
+sqlQuery("
+      SELECT id, goal
+      FROM campaign
+      ORDER BY goal DESC
+      LIMIT 10;
+      ")
+```
+
+What is the minium goal and the maximum goal?# the year span is between 2009 to 2018
+it seems date the date column only contain date with the format yyyy-mm-dd (we have to change that)
+
+```{r}
+sqlQuery("
+    SELECT MIN(goal) as min_goal, 
+           MAX(goal) as max_goal
+    FROM campaign;
+      ")
+```
+The minimum is 0.75 (we do not know what currency yet)
+The maximun goal is 100 000 000 
+We can find which currency
+
+```{r}
+sqlQuery("
+   SELECT name, currency_id, MAX(goal)
+   FROM campaign;
+      ")
+```
+
+There are five projects that had a goal of 1e+08  (currency id is 2)
+
+```{r}
+sqlQuery("
+   SELECT name
+   FROM currency
+   WHERE id =  2
+      ")
+```
+
+Therefore, the maximum goal was 1e+08 USD.
+This query will be easier once we join tables.
+The goal 0.75 might be mistake?
+
+```{r}
+sqlQuery("
+   SELECT name, currency_id, MIN(pledged)
+   FROM campaign;
+      ")
+```
+there are some money for this project. it might be not a mistake
+
+Similarly, we can find the maximum and the minimun of pledged.
+
+
+```{r}
+sqlQuery("
+    SELECT MIN(pledged) as min_pledged, 
+           MAX(pledged) as max_pledged
+    FROM campaign;
+      ")
+```
+There is project that did not get any money.
+The maximum pledged is 5408917
+
+***Category table***
+```{r}
+sqlQuery("
+   SELECT *
+   FROM category
+         ")
+
+```
+
+There are 15 categories
+
+***SubCategory table***
+```{r}
+sqlQuery("
+   SELECT *
+   FROM sub_category
+         ")
+```
+There are 159 subcategories
+
+
+***Currency table***
+```{r}
+sqlQuery("
+   SELECT *
+   FROM currency
+         ")
+```
+There are 14 different curriencied. 
+
+***Country table***
+```{r}
+sqlQuery("
+   SELECT *
+   FROM country
+         ")
+```
+There are 23 countries. Obviously, some countries use the same currency.
+There is a mistake on country name (at id = 11): N,0"
+
+
+```{r}
+sqlQuery("
+   SELECT id, name, country_id, currency_id
+   FROM campaign
+   WHERE country_id = 11
+   LIMIT 10;
+         ")
+```
+
+The country N,0" (id = 11) use USD and GBP at the same time. So far we can not deduct which country is
+we can look for project with the same countries id but use two different currencies
+If we take a deeper look, let see 100 records
+
+```{r}
+sqlQuery("
+   SELECT id, name, country_id, currency_id
+   FROM campaign
+   WHERE country_id = 11
+   LIMIT 100;
+         ")
+```
+So, there are some projects that funded by people from diffent countries
+To check
+
+```{r}
+sqlQuery("
+   SELECT country_id, COUNT(country_id), currency_id, COUNT(currency_id) 
+   FROM campaign
+   GROUP BY country_id, currency_id
+   ORDER BY country_id;
+         ")
+```
+For countries with id from 1 to 10, 12 to 22, the country_id and the currency_id are consistent.
+In contrast, country id with id of 11, the currencies that have been use include 1,2,3,4,8,9,10. There are 123 records that show that this project (country 11 is origin country) is funded using USD (currency id = 2)
+
+
+Question 1: What country has the heighest number of successful/failed campains
+
+```{r}
+sqlQuery("
+         SELECT country.id, country.name, COUNT(campaign.country_id)
+         FROM campaign, country
+         WHERE campaign.country_id =  country.id
+         AND campaign.outcome = 'successful'
+         GROUP BY country_id
+         ORDER BY COUNT(campaign.country_id) DESC;
+         ")
+```
+US had the highest number of sucessful campaigns
+LU  only had two campaigns that were successful.
+
+```{r}
+sqlQuery("
+         SELECT country.id, country.name, COUNT(campaign.country_id)
+         FROM campaign, country
+         WHERE campaign.country_id =  country.id
+         AND campaign.outcome = 'failed'
+         GROUP BY country_id
+         ORDER BY COUNT(campaign.country_id) DESC;
+         ")
+```
+US also had the highest number of failed projects.
+
+Now, we are only interested in projects founded in US
+
+```{r}
+sqlQuery("
+       SELECT outcome, COUNT(outcome)
+       FROM campaign
+       WHERE country_id = 2
+       group by outcome;  
+         ")
+```
+
+There 6075 projects that failed, 4365 were successful, 1088 were canceled, 
+About 100 projects that were suspended and live.
+
+
+the top 10 popular subcategories (As we do not have the column category)
+```{r}
+sqlQuery("
+SELECT count(*), sub.name
+FROM campaign AS camp, sub_category AS sub
+WHERE sub.id = camp.sub_category_id
+  AND camp.country_id = 2
+GROUP BY camp.sub_category_id
+ORDER BY COUNT(*) DESC
+LIMIT 10; 
+         ")
+```
+
+So far, we do not have the column category in the campain table. Product Design is the most popular subcategory.
+
+
+***Duration and outcome
+```{r}
+sqlQuery("
+SELECT 
+      SUM(CASE 
+          WHEN TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) <= 14 
+                THEN 1 ELSE 0 END) AS less2weeks, 
+      SUM(CASE 
+          WHEN (TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) >= 15 
+                AND TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) <= 28) 
+                THEN 1 ELSE 0 END) as 2_4weeks,
+      SUM(CASE 
+          WHEN (TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) >= 29 
+                AND TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) <= 42) 
+          THEN 1 ELSE 0 END) as 4_6weeks,
+      SUM(CASE 
+          WHEN (TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) > 42 
+                AND TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) <= 56) 
+          THEN 1 ELSE 0 END) as 6_8weeks,
+      SUM(CASE 
+          WHEN (TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) > 56 
+                AND TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) <= 70) 
+          THEN 1 ELSE 0 END) as 8_10weeks,
+      SUM(CASE 
+          WHEN (TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) > 70)
+          THEN 1 ELSE 0 END) as greater10weeks,
+      COUNT(*) as total, outcome
+FROM campaign
+WHERE campaign.country_id = 2 
+      AND campaign.outcome = 'successful' OR campaign.outcome = 'failed' OR  campaign.outcome = 'canceled'
+GROUP BY campaign.outcome;
+")
+```
+
+
+```{r}
+sqlQuery("
+SELECT 
+SUM(CASE 
+WHEN TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) <= 28
+THEN 1 ELSE 0 END) AS less4weeks, 
+SUM(CASE 
+WHEN (TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) > 28 
+AND TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) <= 56) 
+THEN 1 
+ELSE 0 END) as 4_8weeks,
+SUM(CASE 
+WHEN TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) > 56  
+THEN 1 ELSE 0 END) as higher8weeks,
+COUNT(*) as total, outcome
+FROM campaign
+WHERE campaign.country_id = 2 
+AND campaign.outcome = 'successful' OR campaign.outcome = 'failed' OR  campaign.outcome = 'canceled'
+GROUP BY campaign.outcome;
+
+")
+```
+
+***Number of bakers and outcome***
+```{r}
+sqlQuery("
+
+SELECT 
+      SUM(CASE WHEN backers <= 25 THEN 1 ELSE 0 END) AS less10,
+      SUM(CASE WHEN (backers > 25 AND backers <= 50) THEN 1 ELSE 0 END) AS b10_50,
+      SUM(CASE WHEN (backers > 50 AND backers <= 75) THEN 1 ELSE 0 END) AS b50_75,
+      SUM(CASE WHEN (backers > 75 AND backers <= 100) THEN 1 ELSE 0 END) AS b75_100,
+      SUM(CASE WHEN backers > 100  THEN 1 ELSE 0 END) as higher100,
+      COUNT(*) as total, outcome
+FROM campaign
+WHERE campaign.country_id = 2 
+        AND campaign.outcome = 'successful' OR campaign.outcome = 'failed' OR campaign.outcome = 'canceled'
+GROUP BY campaign.outcome;
+")
+```
+less than 10 ==> failed or canceled
+higher than 100 ==> successful
+
+***Goal and outcome***
+
+```{r}
+sqlQuery("
+SELECT  
+SUM(CASE WHEN goal <= 5000 THEN 1 ELSE 0 END) AS g5K,
+SUM(CASE WHEN (goal > 5000 AND goal <= 25000) THEN 1 ELSE 0 END) AS g25K,
+SUM(CASE WHEN (goal > 25000 AND goal <= 50000) THEN 1 ELSE 0 END) AS g50K,
+SUM(CASE WHEN (goal > 50000 AND goal <= 75000) THEN 1 ELSE 0 END) AS g75K,
+SUM(CASE WHEN (goal > 75000 AND goal <= 100000) THEN 1 ELSE 0 END) AS g100K,
+SUM(CASE WHEN (goal > 100000 AND goal <= 200000) THEN 1 ELSE 0 END) AS g200K,
+SUM(CASE WHEN goal > 200000  THEN 1 ELSE 0 END) as higher200K,
+COUNT(*) as total, outcome
+FROM campaign
+WHERE campaign.country_id = 2 
+AND campaign.outcome = 'successful' OR campaign.outcome = 'failed' OR campaign.outcome = 'canceled'
+GROUP BY campaign.outcome;
+")
+```
+successful : goal less than 25K
+May need to categorize
+
+
+```{r}
+sqlQuery("
+SELECT  category.id, 
+        ROUND(AVG(c.goal)) as Avggoal, 
+        ROUND(AVG(c.pledged)) as Avgpledged,
+        ROUND(AVG(c.backers)),
+        ROUND(AVG(c.pledged))-ROUND(AVG(c.goal)) as gain, 
+        c.outcome
+FROM campaign c LEFT JOIN sub_category ON c.sub_category_id = sub_category.id
+                LEFT JOIN category ON sub_category.category_id = category.id
+WHERE c.outcome = 'successful' OR c.outcome = 'failed' OR c.outcome = 'canceled'
+      AND country_id = 2 
+GROUP BY category.id, c.outcome 
+ORDER BY category.id, gain;
+")
+```
+
+```{r}
+sqlQuery("
+SELECT 
+campaign.id AS id,
+campaign.name AS ProjectName,
+category.id AS CategoryID,
+category.name AS Category,
+campaign.sub_category_id AS SubCategoryId,
+sub_category.name AS SubCategory,
+campaign.goal AS goal,
+campaign.pledged AS pledged,
+campaign.backers AS backers,
+campaign.launched AS launched,
+campaign.launched AS deadline,
+TIMESTAMPDIFF(DAY,campaign.launched,campaign.deadline) AS days,
+campaign.outcome AS Outcomes
+FROM campaign LEFT JOIN sub_category ON campaign.sub_category_id = sub_category.id
+              LEFT JOIN category ON sub_category.category_id = category.id
+WHERE campaign.outcome = 'successful' OR campaign.outcome = 'failed'
+      AND country_id = 2 # USA
+ORDER BY campaign.id ASC
+LIMIT 20;
+")
+```
+
+
+
+
+
+
