@@ -1,0 +1,1000 @@
+---
+title: 'Kickstarter project-Part 2: Creating consistent data, Performing Exploratoy
+  data analysis, and building the Decision tree'
+author: "Minh-Trung DANG"
+date: "11/04/2020"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(DataExplorer)
+library(Hmisc)
+library(corrplot)
+library(ggplot2)
+```
+
+```{r}
+options(tibble.width = Inf)
+options(tibble.print_max = 10440, tibble.print_min = 6)
+```
+
+```{r}
+getwd()
+```
+
+```{r}
+KS <- read_csv("Kickstarter2.csv")
+```
+
+```{r}
+str(KS)
+```
+Checking the inconsistency of the data 
+
+Convert Category, Subcategory and outcome into factor
+
+```{r}
+KS <- KS %>%
+    mutate_if(is.character,as.factor)
+```
+
+```{r}
+class(KS$outcome)
+```
+
+Create columns of year, month, and day of month. Convert them into numeric
+
+```{r}
+KS$launchedMonth <- as.numeric(format(KS$launched, "%m"))
+KS$launchedDay <- as.numeric(format(KS$launched, "%d"))
+
+KS$deadlineMonth <- as.numeric(format(KS$deadline, "%m"))
+KS$deadlineDay <- as.numeric(format(KS$deadline, "%d"))
+```
+
+Rearrange columns using tidyverse (This step can be done with SQL)
+
+```{r}
+KS <- KS %>% 
+  dplyr::select(id,
+    Category, 
+    Subcategory,
+    launchedMonth, launchedDay,
+    deadlineMonth, deadlineDay,
+    days,
+    goal, backers, pledged,
+    outcome
+    )
+```
+
+```{r}
+KS %>% 
+  group_by(launchedMonth) %>% 
+  count()
+```
+
+Recoding 
+
+```{r}
+KS <- KS %>% 
+  mutate(launchedmonth = case_when(
+    launchedMonth == "1" ~ "Jan",
+    launchedMonth == "2" ~ "Fev",
+    launchedMonth == "3" ~ "Mar",
+    launchedMonth == "4" ~ "Apr",
+    launchedMonth == "5" ~ "May",
+    launchedMonth == "6" ~ "June",                
+    launchedMonth == "7" ~ "July",
+    launchedMonth == "8" ~ "Aug",
+    launchedMonth == "9" ~ "Sept",
+    launchedMonth == "10" ~ "Oct",
+    launchedMonth == "11" ~ "Nov",
+    launchedMonth == "12" ~ "Dec"))
+
+KS$launchedmonth <- factor(KS$launchedmonth,
+                                levels = c("Jan","Fev","Mar",
+                                           "Apr","May","June",
+                                           "July","Aug", "Sept",
+                                           "Oct","Nov","Dec"),ordered = TRUE)
+
+KS <- subset(KS, select = -c(launchedMonth))
+```
+
+```{r}
+KS %>% 
+  group_by(launchedmonth) %>% 
+  count()
+```
+
+Projects on Kickstarter can last anywhere from 1 - 60 days. 
+
+```{r}
+KS %>% 
+  filter(days > 60) %>% 
+  count()
+```
+Only keep records where projects can last anywhere from 1 to 60 days
+
+```{r}
+KS <- KS %>% 
+  filter(days <= 60)
+```
+
+
+```{r}
+KS %>% 
+  filter(days == 0) %>% 
+  count()
+```
+There is no project that launched and ended within a day.
+
+
+1. Missing values
+```{r}
+library(DataExplorer)
+```
+
+```{r}
+plot_missing(KS)
+```
+
+The data does not contain missing values
+
+2. Checking consistency between columns.
+Errors could be
+a. The "successful" projects do not have any supporters (i.e. bakers = 0).
+
+```{r}
+KS %>% 
+  filter(backers == 0 & outcome == "successful") %>% 
+  summarise( count = n())
+```
+There are seven records that contain error. What are these rows?
+```{r}
+KS %>% 
+  select(id, Category, backers, outcome) %>% 
+  filter(backers == 0 & outcome == "successful")
+```
+To remove these seven records
+ 
+```{r}
+row_toremove <- with(KS, which(backers == 0 & outcome == "successful", arr.ind=TRUE))
+KS <- KS[-row_toremove,]
+```
+
+b. A project is failed when goal > pledged. There will be errors if 
+b1. goal < pleged and the outcome = failed (outcome should be successful)
+   
+```{r}
+KS %>% 
+  select(id, Category, backers, pledged, goal, outcome) %>% 
+  filter(pledged > goal & outcome == "failed") 
+```
+```{r}
+KS$outcome[KS$pledged >  KS$goal & KS$outcome == "failed"] <- "successful"
+```
+
+b2. goal > pleded and the outcome = successful (the cutcome should be failed)
+
+```{r}
+KS %>% 
+  select(id, Category, backers, pledged, goal, outcome) %>% 
+  filter(pledged < goal & outcome == "successful")
+```
+
+b3. goal > plegded and the outcome = canceled, because the outcome should be labelled as failed. It may not be an error if the founder decided to cancel the project. However, for this project, we will change the outcome of these records from canceled to succefull
+
+```{r}
+KS %>% 
+  filter(pledged < goal & outcome == "canceled") %>% 
+  count()
+```
+There are 1073 rows.
+
+```{r}
+KS %>% 
+  select(id, Category, backers, pledged, goal, outcome) %>% 
+  filter(pledged < goal & outcome == "canceled") %>% 
+  head(10)
+```
+These projects are canceled because pledged money is way less than goal. These projects are propably failed. 
+We will apply "Conditionally replace multiple rows in a data frame"
+
+```{r}
+KS$outcome[KS$pledged <  KS$goal & KS$outcome == "canceled"] <- "failed"
+```
+
+b4. plegded > goal and the outcome = canceled, because the outcome should be labelled as successful. Similarly, we can change the outcomes of these records from canceled to faile
+
+```{r}
+KS %>% 
+  filter(pledged > goal & outcome == "canceled") %>% 
+  count()
+```
+
+```{r}
+KS %>% 
+  filter(pledged > goal & outcome == "canceled") %>% 
+  head(10)
+```
+The outcome of these records will be rewritten as successful.
+
+```{r}
+KS$outcome[KS$pledged >  KS$goal & KS$outcome == "canceled"] <- "successful"
+```
+
+
+How many projects that were canceled?
+
+```{r}
+KS %>% 
+  group_by(outcome) %>% 
+  count()
+```
+there is only one project that was canceled
+
+```{r}
+KS %>% 
+  select(id, Category, backers, pledged, goal, outcome) %>% 
+  filter(outcome == "canceled")
+```
+
+We can remove that record. A amount of 1 dollar as a goal seem to be not reasonable
+
+```{r}
+KS <- KS %>% 
+  filter(id != 2540)
+```
+
+How about goal ? are there any projects that put 0 dollar as goal?
+
+```{r}
+summary(KS$goal)
+```
+How many project that the goal are less than 100 dollars
+
+```{r}
+KS %>% 
+  filter(goal < 100) %>% 
+  count()
+```
+
+Were these projects successful?
+
+```{r}
+KS %>% 
+  group_by(outcome) %>% 
+  filter(goal < 100) %>% 
+  count()
+```
+So far, we will keep these records.
+
+
+```{r}
+str(KS)
+```
+
+```{r}
+table(KS$outcome)
+```
+The outcome still has 3 factor levels. We will remove the unused level ("canceled")
+
+```{r}
+KS$outcome <- factor(KS$outcome)
+```
+
+```{r}
+table(KS$outcome)
+```
+
+
+2. Exploratory data analysis
+```{r}
+theme_general <- theme(plot.title = element_text(hjust = 0.5), 
+        axis.title = element_text(size = 14, face = "bold", color = "black"), 
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        legend.position = "right", 
+        legend.title = element_text(size = 14),
+        legend.text = element_text(colour="black", size = 14))
+```
+
+
+Q1. What categories are most popular?
+We first begin by examining the number of projects by category 
+```{r, fig.height = 7.5, fig.width = 15}
+Category_df <- KS %>%
+  group_by(Category) %>% 
+  summarise(counts = n()) %>% 
+  mutate(Percentage = round(counts*100/sum(counts),2)) %>% 
+  arrange(desc(counts))
+
+ggplot(data = Category_df,
+           aes(x= reorder(Category, -counts),
+               y  = counts,
+               fill = Percentage)) +
+  geom_bar(stat = "identity",
+           width = 0.7) +
+  scale_fill_gradient(low="skyblue1", high="royalblue4")+
+  geom_text(aes(label = paste0(counts,"\n", Percentage,"%")), 
+            vjust = -0.1, 
+            color = "darkblue", 
+            size = 5) +
+  scale_y_continuous(limits = c(0,2500)) +
+  theme_minimal() +
+  labs(x = "Category",
+       y = "Frequency",
+       caption = "Kickstarter 2009-2014") +
+  theme_general
+```
+
+Film & Video, Music, and Publishing lead the chart.
+Journalism, Dance and Crafts are the least popular.
+
+Preliminary analysis using SQL revealed that there are 153 subcatergories.
+
+What are the top ten subcategories ?
+
+```{r, fig.height = 7.5, fig.width= 10}
+subcat.freq <- KS %>%
+  dplyr::group_by(Subcategory) %>%
+  dplyr::summarize(Frequency = n()) %>%
+  arrange(desc(Frequency)) %>% 
+  head(10)
+
+ggplot(subcat.freq, 
+       aes(x = reorder(Subcategory,-Frequency), Frequency, fill = Frequency)) + 
+  geom_bar(stat="identity",
+           width = 0.65,
+           fill = "skyblue1",
+           colour = "skyblue1") + 
+  labs(title = "Number of Projects by subcategory", 
+       x = "The top 10 Project Subcategory",
+       y = "Frequency") +
+  geom_text(aes(label = Frequency), 
+            vjust = 0.5, 
+            hjust = -0.1,
+            color = "darkblue", 
+            size = 5) + 
+  coord_flip() +
+  theme_general
+```
+
+How to find which Category these subcategories belong?
+```{r}
+KS %>% 
+  select(Category, Subcategory) %>% 
+  group_by(Category, Subcategory) %>% 
+  filter(Subcategory %in% c("Product Design", "Documentary", "Music", "Tabletop Games",
+                            "Shorts", "Video Games", "Food", "Film & Video", "Nonfiction", "Fiction")) %>% 
+  summarise(fre =  n()) %>% 
+  arrange(desc(fre))
+```
+
+These top sub-categories stemm from category: Design, Film & Video, Music, Games, Food and Publishing.
+
+Question 2: What types of projects are being funded?
+This question is akin to the first question but phrased from the perspective of the backers.
+In other words, the most funded projects are the most popular projects in the perspective of the backers
+
+
+```{r}
+KS %>% 
+  select(Category, Subcategory, pledged) %>% 
+  arrange(desc(pledged)) %>% 
+  head(10)
+```
+
+A lot of the projects here fall under the "Games"  and "Technology" category.
+
+Similarly, let's list the top 15 most backed projects (i.e. projects with the most backers).
+
+```{r}
+KS %>% 
+  select(Category, Subcategory, backers) %>% 
+  arrange(desc(backers)) %>% 
+  head(20)
+```
+
+8 technology
+7 games
+3 film & video
+
+
+Question 3: What types of projects funding is going towards ? 
+===>  aggregating the amount of funds pledged for each category, providing us with the total amount pledged for each category.
+
+```{r, fig.height = 8, fig.width = 16}
+pledged.tot_df <- KS %>%
+  dplyr::group_by(Category) %>%
+  dplyr::summarize(total = sum(pledged/1000000)) %>%
+  mutate(Percentage = round(total*100/sum(total),2)) %>% 
+  arrange(desc(total))
+
+ggplot(data = pledged.tot_df,
+           aes(x= reorder(Category, -total),
+               y  = total,
+               fill = Percentage)) +
+  geom_bar(stat = "identity",
+           width = 0.7) +
+  scale_fill_gradient(low="skyblue1", high="royalblue4")+
+  geom_text(aes(label = paste0("$",round(total,1),"M", "\n",Percentage,"%")), 
+            vjust = -0.1, 
+            color = "darkblue", 
+            size = 5) +
+  scale_y_continuous(limits = c(0,30)) +
+  theme_minimal() +
+  labs(x = "Category",
+       y = "Pledges (Million USD)",
+       caption = "Kickstarter 2009-2014") +
+  ggtitle("Total Amount Pledged by Category") +
+  theme_general
+```
+Technology, Games, and Design are highest grossing categories by far.
+
+Film& Video is the most popular among category.
+Less than 1 % of projects is Dance or Journalism.
+For each categpry, which catergory has higher successful rate?
+
+```{r}
+library(arsenal)
+```
+
+```{r}
+table_one <- tableby(outcome ~ Category + goal+ pledged + backers + days , data = KS)
+summary(table_one, title = "Summary statistic of Kickstarter data")
+```
+
+
+
+It is important to take the number of backers into account as well ==>  determine the average amount pledged per backer for each category. 
+==> calculate this by taking the total amount pledged for each category and dividing it by the total number of backers for each category.
+
+```{r}
+library(pander)
+```
+
+```{r}
+pledged.avg <- KS %>%
+  dplyr::group_by(Category) %>%
+  dplyr::summarize(pledged = sum(pledged), backers = sum(backers)) %>%
+  mutate(avg = pledged/backers) %>%
+  arrange(desc(avg)) 
+
+pledged.avg$Category <- factor(pledged.avg$Category, levels = pledged.avg$Category)
+
+pledged.avg %>% 
+  pander()
+```
+
+```{r}
+library(hrbrthemes)
+```
+```{r, fig.height= 7.5, fig.width= 15}
+ggplot(pledged.avg, aes(Category, avg, fill = avg)) + 
+  geom_bar(stat = "identity") + 
+  labs(title = "Average Amount Pledged per Backer",
+       x = "Project Category",
+       y = "Amount Pledged (USD)") +
+  geom_text(aes(label=paste0("$", round(avg,2))), 
+            vjust= 0.5,
+            hjust = -0.1) + 
+  scale_fill_distiller(palette = "Spectral") +
+  coord_flip() +
+  theme_general
+```
+
+"Art" has the highest average amount pledged, whereas Comics has the lowest average amount pledged. 
+An interesting note here is that the average amount pledged for "Art" is nearly double that of "Comics", 
+even though Games had the higher aggregate amount pledged as shown in the previous graph.
+
+Question 4: Distribution of pledged for each category
+
+```{r, fig.height= 7.5, fig.width= 10}
+ggplot(KS, aes(Category, pledged, fill = Category)) + 
+  geom_boxplot() + 
+  ggtitle("Amount Pledged vs. Project Category") + 
+  xlab("Project Category") + 
+  ylab("Amount Pledged (USD)") + 
+  theme(plot.title = element_text(size = 15, face = "bold", hjust = 0.5), 
+        axis.title = element_text(size = 12, face = "bold"), 
+        axis.text.x=element_text(size = 12, angle = 90), legend.position = "null") + 
+  coord_cartesian(ylim=c(0,30000))
+```
+
+
+There are no doubt a lot of projects that received little to no funding as well as huge outliers.
+
+```{r}
+KS %>% 
+  group_by(Category) %>% 
+  summarise(median = median(pledged)) %>% 
+  arrange(desc(median))
+```
+Designe, Game and Comics have higher median than other category. 
+
+
+Many projects, smnaller goals = lower median.
+Higher median == less project, less backer, but the pledged is dispersed.
+
+
+Having looked at both the amount pledged and goal for different kinds of projects, 
+see how the distribution of each compares to one another. 
+Since we can expect both distributions to be heavily right-skewed due to many projects that received little to no funding and extremely high outliers,
+we will use a log transformation on both variables to better visualize their distributions.
+
+
+```{r}
+outcome.pct <- KS %>%
+  dplyr::group_by(Category, outcome) %>%
+  dplyr::summarize(count = n()) %>%
+  mutate(pct = count/sum(count)) %>%
+  arrange(desc(outcome), pct)
+
+outcome.pct$Category <- factor(outcome.pct$Category,levels=outcome.pct$Category[1:(nrow(outcome.pct)/2)])
+```
+
+```{r, fig.height= 7.5, fig.width= 15}
+plot1 <- ggplot(outcome.pct, aes(reorder(Category,-count), pct, fill = outcome)) + 
+  geom_bar(stat="identity") + 
+  ggtitle("Success vs. Failure Rate by Project Category") + 
+  xlab("Project Category") + 
+  ylab("Percentage") + 
+  scale_y_continuous(labels=scales::percent) + 
+  scale_fill_manual(values=c("#E3CD81FF", "#B1B3B3FF")) +
+  geom_text(aes(label = paste0(round(pct*100,1),"%")), 
+            position = position_stack(vjust=0.5), 
+            colour = "blue", 
+            size = 3.5, 
+            fontface = "bold") + 
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.title = element_text(size = 12), 
+        axis.text.x = element_text(size = 12), 
+        axis.text.y = element_text(size = 12),
+        legend.position = "bottom", 
+        legend.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(colour="black", size = 12)) + 
+  coord_flip()
+
+plot2 <- ggplot(outcome.pct, aes(reorder(Category,-count),  count, fill = outcome)) + 
+  geom_bar(stat="identity") + 
+  ggtitle("Success vs. Failure Rate by Project Category") + 
+  xlab("Project Category") + ylab("Number of Projects") + 
+  scale_y_continuous(labels = scales::comma) + 
+  scale_fill_manual(values=c("#E3CD81FF", "#B1B3B3FF")) +
+  geom_text(aes(label = paste0(round(count,1),"")), 
+            position = position_stack(vjust = 0.5), 
+            colour = "blue", 
+            size = 3, 
+            fontface = "bold") + 
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.title = element_text(size = 12), 
+        axis.text.x = element_text(size = 12), 
+        axis.text.y = element_text(size = 12), 
+        legend.position = "bottom", 
+        legend.title = element_text(size  = 12),
+        legend.text = element_text(colour="black", size = 12)) + 
+  coord_flip()
+gridExtra::grid.arrange(plot1, plot2, ncol = 2)
+```
+Dance, Comics, and Theater have the highest success rates and Technology, Fashion, Journalism, Crafts, and Foods have the lowest. 
+This agrees with the box plots for amounts pledged and project goal amounts above as Dance and Comics both had high median amounts pledged and low median goals, with Theater having a low median goal as well.
+Technology, Journalism, and Crafts had low median amounts pledged, with Technology having a high median goal. 
+In general, the higher the amount pledged and/or the lower the goal, the more likely a project will be successful. 
+Interestingly enough, Crafts, having a low median amount pledged, also has a low success rate despite having a low median goal, which may indicate that people generally are not as interested in this category as a whole.
+
+
+Question 5 : What types of projects were successful and unsuccessful?
+reak down the number of projects by their status (e.g. successful, failed, cancelled, etc.).
+
+```{r, fig.height= 5,  fig.width= 6}
+outcome_prop <- KS %>% 
+  group_by(outcome) %>% 
+  count() %>% 
+  ungroup()%>% 
+  arrange(desc(outcome)) %>%
+  mutate(percentage = round(n/sum(n),4)*100,
+         lab.pos = cumsum(percentage)-0.5*percentage)
+
+ggplot(data = outcome_prop, 
+       aes(x = "", 
+           y = percentage, 
+           fill = outcome))+
+  geom_bar(stat = "identity")+
+  coord_polar("y") +
+  geom_text(aes(y = lab.pos, 
+                label = paste(percentage,"%", sep = "")), col = "blue", size = 5) +
+  scale_fill_manual(values=c("#E3CD81FF", "#B1B3B3FF")) +
+  theme_void() +
+  theme(legend.title = element_text(color = "black", size = 14),
+        legend.text = element_text(color = "black", size = 14))
+```
+
+About two thirds of projects see the light of day. 
+
+Question 6: Month of year matters?
+1. Number of projects
+```{r}
+df_month <- KS %>% 
+  group_by(launchedmonth) %>% 
+  summarise(Count = n())
+
+ggplot(df_month, aes(launchedmonth, Count)) + 
+  geom_point(aes(size = Count, group = Count), colour = "blue") +
+  labs(title = "Number of projects by month",
+       x = "Month",
+       y = "Frequency") + 
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.title = element_text(size = 14, face = "bold"), 
+        axis.text.x = element_text(size = 14), 
+        axis.text.y = element_text(size = 14), 
+        legend.position = "right", 
+        legend.title = element_text(size= 14, face = "bold")) 
+```
+Less projects launched in January and February.
+Much less projects launched in December
+
+2. Successful vis failed
+
+```{r, fig.height= 5, fig.width= 10}
+month.pct <- KS %>%
+  dplyr::group_by(launchedmonth, outcome) %>%
+  dplyr::summarize(count = n()) %>%
+  mutate(pct = count/sum(count)) %>%
+  arrange(desc(outcome), pct)
+
+ggplot(month.pct, aes(launchedmonth, 
+                      pct,
+                      fill = outcome)) + 
+  geom_bar(stat="identity") + 
+  ggtitle("Success vs. Failure Rate by month") + 
+  xlab("Month") + 
+  ylab("Percentage") + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_manual(values=c("#E3CD81FF", "#B1B3B3FF")) +
+  geom_text(aes(label = paste0(round(pct*100,1),"%")), 
+            position = position_stack(vjust = 0.5), 
+            colour = "blue", 
+            size = 3.5, 
+            fontface = "bold") + 
+  theme_general
+```
+
+The rate of success is lowest in July (32.8%) and highest in March and November (about 40%)
+
+Chi-square test for association
+
+H0: Month is not associated with the outcome
+Ha: Month is associated with the outcome
+
+```{r}
+chisq.test(KS$launchedmonth, KS$outcome)
+```
+The p-value = 0.003 < 0.01. We reject the null hypothesis. 
+We conclude that month is associated with the outcome
+
+Day of month matters?
+```{r, fig.height= 5, fig.width= 10}
+launchedDay_tbl <-  KS %>% 
+  group_by(launchedDay) %>% 
+  count()
+
+ggplot(launchedDay_tbl, aes(x = launchedDay, y = n)) + 
+  geom_line(color = "grey", size = 1.5) + 
+  geom_point(color = "blue", size = 4)+
+  geom_smooth(colour="green", method = "lm", se = FALSE) +
+  scale_x_continuous(breaks = seq(from = 0, to = 31, by = 5)) +
+      labs(title = "Number of projects by day of month", 
+           x = "Day of month",
+           y = "Frequency") + 
+  theme_set(theme_classic()) + 
+  theme_general
+```
+The number of launched projects is highest on the first day of month and decreases toward the end of month.
+What are the successful rate in function of day
+
+```{r, fig.height= 7.5, fig.width= 17.5}
+day.pct <- KS %>%
+  dplyr::group_by(launchedDay, outcome) %>%
+  dplyr::summarize(count = n()) %>%
+  mutate(percentage = count/sum(count)) %>%
+  arrange(launchedDay, percentage)
+
+
+ggplot(day.pct, aes(launchedDay, 
+                    percentage,
+                    fill = outcome)) + 
+  geom_bar(stat="identity") + 
+  ggtitle("Success vs. Failure Rate by day of month") + 
+  xlab("Day of month") + 
+  ylab("Percentage") + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_x_continuous(breaks = c(1:31))+
+  scale_fill_manual(values=c("#E3CD81FF", "#B1B3B3FF")) +
+  geom_text(aes(label = paste0(round(percentage*100,1),"%")), 
+            position = position_stack(vjust = 0.5), 
+            colour = "blue", 
+            size = 3.5, 
+            fontface = "bold") + 
+  theme_general
+```
+The lowest successful rate is 33.5 and the highest successful rate is 43.4%
+There is no pattern that can be observed here.
+
+Outcome and duration of project
+```{r}
+ # Overlaid histograms
+ggplot(KS, aes(x=days, color=outcome)) +
+  geom_histogram(fill="white", alpha=0.5, position="identity") +
+  scale_color_manual(values=c("red", "blue"))+
+  scale_fill_manual(values=c("red", "blue"))+
+  theme_general
+```
+
+
+```{r}
+ggplot(KS, aes(x = factor(outcome), 
+               y = days,
+               fill = factor(outcome))) +
+  geom_boxplot() + 
+  geom_jitter(width = 0.35, 
+              alpha = 0.2,
+              shape = 15,
+              color = "steelblue") +
+  scale_y_continuous (breaks = seq(0, 70, 15),
+                      limits = c(0, 70)) +
+  ggtitle("Distribution of days by outcome") +
+  xlab("Outcome") +
+  ylab("Duration of projects (days)") +
+  labs(fill = "Outcome") +
+  scale_fill_manual(values=c("#E3CD81FF", "#B1B3B3FF")) +
+  theme(axis.line = element_line(size = 0.5, colour = "grey"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(size = 14, face = "bold"),
+        text = element_text(colour = "black", size = 14),
+        axis.text.x = element_text(colour = "black", size = 14),
+        axis.text.y = element_text(colour = "black", size = 14),
+        legend.position = "right")
+```
+
+There are many projects that were launched and ended for a duration of 30, 45, and 60 days.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+2. Correlation analysis
+
+```{r}
+library(ggpubr)
+library(ggcorrplot)
+```
+
+```{r}
+#Correlation backers, pledge, goal and days
+corr <- round(cor(KS[c(7:10)]),2)
+ggcorrplot(corr, 
+           type = "upper", 
+           lab = TRUE,
+           outline.col = "white",
+           ggtheme = ggplot2::theme_gray,
+           colors = c("#6D9EC1", "white", "#E46726"))
+```
+There is a strong and positive correlatin between pledged and backers. 
+
+
+```{r}
+ggscatter(KS, x = "backers", y = "pledged", 
+          add = "reg.line", 
+          conf.int = TRUE, 
+          cor.coef = TRUE,
+          cor.method = "pearson",
+          xlab = "Number of backers", 
+          ylab = "Pledged amount (USD))") + theme_general
+```
+
+```{r}
+df_goal <- KS %>%
+  filter(goal!="0") 
+```
+
+```{r}
+ggplot(df_goal,
+       aes(log(backers),log(pledged), 
+           color = outcome)) + 
+  geom_point(position = "identity") +  
+  ggtitle("Backers in function of pledged amount") + xlab("log(Backers)") + 
+  ylab("Pledged") + 
+  theme_general
+```
+
+Goals in function of usd pledged
+
+```{r}
+ggplot(df_goal, aes(log(goal),log(pledged), color = outcome)) + 
+  geom_point(position="identity") +  
+  ggtitle("Goals in function of Pledges") + 
+  xlab("log(Goals)") + 
+  ylab("log(pledged)") + 
+  theme_general
+```
+
+Goals in function of backers
+```{r}
+ggplot(df_goal, aes(log(backers),log(goal), color = outcome)) + 
+  geom_point(position="identity") +   
+  ggtitle("Backers in function of Goals") + 
+  xlab("log(Backers)") + 
+  ylab("log(Goals") + 
+  theme_general
+```
+Pledge's length in function of backers
+```{r}
+ggscatter(KS, x = "days", y = "pledged", 
+          add = "reg.line", 
+          conf.int = TRUE, 
+          cor.coef = TRUE,
+          cor.method = "pearson",
+          xlab = "Number of backers", 
+          ylab = "Pledged amount (USD))") + 
+  theme_general
+```
+
+
+3. BUILDING MODEL
+
+```{r}
+str(KS)
+```
+
+
+
+```{r}
+Creative <- KS %>%
+  dplyr::select(Category, launchedDay, launchedmonth, backers, days, pledged, goal, outcome)
+```
+
+```{r}
+head(Creative)
+
+```
+#--- Training & Validation Sets ---#
+
+```{r}
+library(caret)
+```
+
+```{r}
+set.seed(100)
+Trainindex <- createDataPartition(y = Creative$outcome, p = .70, list = FALSE)
+training <- Creative[Trainindex ,]
+validation <- Creative[-Trainindex,]
+training_new <- training[-8]
+validation_new <- validation[-8]
+training_label <- training$outcome
+validation_label <- validation$outcome
+```
+
+3.1. Logistic regression
+
+```{r}
+library(rpart)
+library(rpart.plot)
+library(caret)
+```
+
+```{r}
+set.seed(123)
+default_glm_mod <- train(form = outcome ~ .,
+                         data = training,
+                         method = "glm",
+                         family = "binomial",
+                         tuneLength = 5)
+```
+
+```{r}
+glm_pred <- predict(default_glm_mod, newdata= validation)
+confusionMatrix(glm_pred, validation$outcome, positive = "successful")
+```
+
+```{r}
+summary(default_glm_mod)
+```
+Only pledged and goal are important.
+bakers is not important
+
+
+#--- r part ---#
+```{r}
+set.seed(100)
+rparttree  <- rpart(outcome ~ pledged + goal, data = training, 
+                 method = "class", 
+                 cp = .001, 
+                 minsplit = 5, 
+                 xval = 5)
+```
+
+
+```{r, fig.height = 10, fig.width = 15 }
+# Plot the trees
+rpart.plot(rparttree)
+```
+
+
+```{r}
+plotcp(rparttree)
+```
+
+```{r}
+set.seed(123)
+
+optimal_tree <- rpart(
+    formula = outcome ~ .,
+    data    = training,
+    method  = "class",
+    control = list(minsplit = 50, 
+                   minbucket= 100, 
+                   maxdepth = 4, 
+                   xval = 10,
+                   cp = 0.0024))
+
+pred <- predict(optimal_tree, newdata = validation,type = "class")
+
+confusionMatrix(data = pred , validation$outcome, positive = "successful")
+```
+
+```{r}
+library(rattle)
+```
+
+
+```{r, fig.width= 10, fig.height = 10}
+fancyRpartPlot(optimal_tree, 
+               palettes=c("Greys", "Blues"),
+               main = "Creative Kickstarter Classification Tree")
+```
+
+```{r, fig.height=7, fig.width=10}
+rpart.plot(optimal_tree, type = 4, 
+           clip.right.labs = FALSE,
+           branch.lty = 3, # dotted branch lines
+           branch = 0.7, 
+           under = TRUE,
+           nn = TRUE)
+```
+
+
+
+
+
+
+
+
+
+
+
